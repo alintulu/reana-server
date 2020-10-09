@@ -381,3 +381,79 @@ def status_report(types, email, admin_access_token):
             fg="red",
             err=True,
         )
+
+
+@reana_admin.command("quota-usage", help="List quota usage of users.")
+@click.option("--id", help="The id of the user.")
+@click.option("-e", "--email", help="The email of the user.")
+@click.option("--user-access-token", help="The access token of the user.")
+@click.option(
+    "--json",
+    "output_format",
+    flag_value="json",
+    default=None,
+    help="Get output in JSON format.",
+)
+@admin_access_token_option
+@click.pass_context
+def list_quota_usage(
+    ctx, id, email, user_access_token, admin_access_token, output_format
+):
+    """List quota usage of users."""
+    try:
+        response = _get_users(id, email, user_access_token, admin_access_token)
+        headers = ["id", "email", "cpu-used", "cpu-limit", "disk-used", "disk-limit"]
+        health_colour = {"healthy": "green", "warning": "yellow", "critical": "red"}
+        health_order = {"healthy": 0, "warning": 1, "critical": 2}
+        data = []
+        colours = []
+        health = []
+        for user in response:
+            (disk, cpu,) = user.get_quota_usage().values()
+            data.append(
+                (
+                    str(user.id_),
+                    user.email,
+                    cpu.get("usage"),
+                    cpu.get("limit"),
+                    disk.get("usage"),
+                    disk.get("limit"),
+                )
+            )
+
+            health_ordered = max(
+                [disk.get("health"), cpu.get("health")],
+                key=lambda key: health_order[key],
+            )
+            colours.append(health_colour[health_ordered])
+            health.append(health_ordered)
+
+        data, colours, _ = (
+            list(t)
+            for t in zip(
+                *sorted(
+                    zip(data, colours, health),
+                    key=lambda t: health_order[t[2]],
+                    reverse=True,
+                )
+            )
+        )
+
+        if output_format:
+            tablib_data = tablib.Dataset()
+            tablib_data.headers = headers
+            for row in data:
+                tablib_data.append(row)
+
+            click.echo(tablib_data.export(output_format))
+        else:
+            click_table_printer(headers, [], data, colours)
+
+    except Exception as e:
+        logging.debug(traceback.format_exc())
+        logging.debug(str(e))
+        click.echo(
+            click.style("User could not be retrieved: \n{}".format(str(e)), fg="red"),
+            err=True,
+        )
+
